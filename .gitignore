@@ -1,0 +1,21 @@
+# Python bytecode
+__pycache__/
+*.py[cod]
+
+
+# Editor files
+.vscode/
+*.code-workspace
+
+# OS generated
+.DS_Store
+Thumbs.db
+
+# Model & data
+*.pt
+*.pkl
+*.mp4
+
+# Deepface library folder (jika hasil ekstrak atau clone)
+deepface/
+dlib/
