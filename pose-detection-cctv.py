@@ -305,7 +305,7 @@ def main():
     detector = ClassroomPoseDetector()
     
     # Open video capture (0 for webcam, or provide video file path)
-    cap = cv2.VideoCapture('test.mp4')  # Change to video file path if needed
+    cap = cv2.VideoCapture('Test.mp4')  # Change to video file path if needed
     
     if not cap.isOpened():
         print("Error: Could not open video source")
