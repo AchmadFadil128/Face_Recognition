@@ -4,6 +4,8 @@ from ultralytics import YOLO
 import math
 from collections import defaultdict
 import time
+import os
+from pathlib import Path
 
 class PersonTracker:
     def __init__(self, max_disappeared=30, max_distance=100):
@@ -158,6 +160,18 @@ class ClassroomPoseDetector:
             (0, 255, 255), (128, 0, 0), (0, 128, 0), (0, 0, 128), (128, 128, 0),
             (128, 0, 128), (0, 128, 128), (192, 192, 192), (255, 165, 0), (255, 20, 147)
         ]
+        
+        # Supported image formats
+        self.image_formats = {'.jpg', '.jpeg', '.png', '.bmp', '.tiff', '.tif', '.webp'}
+        self.video_formats = {'.mp4', '.avi', '.mov', '.mkv', '.flv', '.wmv', '.m4v', '.webm'}
+    
+    def is_image_file(self, file_path):
+        """Check if the file is an image"""
+        return Path(file_path).suffix.lower() in self.image_formats
+    
+    def is_video_file(self, file_path):
+        """Check if the file is a video"""
+        return Path(file_path).suffix.lower() in self.video_formats
     
     def apply_custom_nms(self, detections_with_conf, iou_threshold=0.4):
         """Apply Non-Maximum Suppression to remove duplicate detections"""
@@ -254,6 +268,56 @@ class ClassroomPoseDetector:
         
         return tracked_objects
     
+    def process_image(self, image_path, output_path=None, show_result=True):
+        """Process a single image for person detection and pose estimation"""
+        # Read the image
+        frame = cv2.imread(image_path)
+        if frame is None:
+            print(f"Error: Could not load image from {image_path}")
+            return None
+        
+        print(f"Processing image: {image_path}")
+        print(f"Image dimensions: {frame.shape[1]}x{frame.shape[0]}")
+        
+        # Process the image
+        tracked_objects = self.process_frame(frame)
+        
+        # Visualize results
+        output_frame = self.visualize_results(frame, tracked_objects)
+        
+        # Save result if output path is provided
+        if output_path:
+            cv2.imwrite(output_path, output_frame)
+            print(f"Result saved to: {output_path}")
+        
+        # Display result
+        if show_result:
+            # Resize for display if image is too large
+            display_frame = self.resize_for_display(output_frame)
+            cv2.imshow('Classroom Pose Detection - Image Result', display_frame)
+            print(f"Found {len(tracked_objects)} persons. Press any key to close...")
+            cv2.waitKey(0)
+            cv2.destroyAllWindows()
+        
+        return tracked_objects, output_frame
+    
+    def resize_for_display(self, frame, max_width=1200, max_height=800):
+        """Resize frame for better display if it's too large"""
+        height, width = frame.shape[:2]
+        
+        if width > max_width or height > max_height:
+            # Calculate scaling factor
+            scale_w = max_width / width
+            scale_h = max_height / height
+            scale = min(scale_w, scale_h)
+            
+            new_width = int(width * scale)
+            new_height = int(height * scale)
+            
+            frame = cv2.resize(frame, (new_width, new_height))
+            
+        return frame
+    
     def draw_pose(self, frame, keypoints, color, thickness=2):
         """Draw pose skeleton on frame"""
         # Draw keypoints
@@ -294,60 +358,126 @@ class ClassroomPoseDetector:
             cv2.circle(frame, centroid, 5, color, -1)
         
         # Display statistics
-        cv2.putText(frame, f'Persons tracked: {len(tracked_objects)}', 
+        cv2.putText(frame, f'Persons detected: {len(tracked_objects)}', 
                    (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 2)
         
         return frame
 
+    def process_video(self, video_path):
+        """Process video file or webcam stream"""
+        cap = cv2.VideoCapture(video_path)
+        
+        if not cap.isOpened():
+            print(f"Error: Could not open video source: {video_path}")
+            return
+        
+        print(f"Processing video: {video_path}")
+        print("Press 'q' to quit, 's' to save current frame")
+        
+        frame_count = 0
+        fps_start_time = time.time()
+        
+        while True:
+            ret, frame = cap.read()
+            if not ret:
+                print("End of video or failed to read frame")
+                break
+            
+            # Process frame
+            tracked_objects = self.process_frame(frame)
+            
+            # Visualize results
+            output_frame = self.visualize_results(frame, tracked_objects)
+            
+            # Calculate and display FPS
+            frame_count += 1
+            if frame_count % 30 == 0:
+                fps_end_time = time.time()
+                fps = 30 / (fps_end_time - fps_start_time)
+                fps_start_time = fps_end_time
+                print(f"FPS: {fps:.2f}, Persons: {len(tracked_objects)}")
+            
+            # Resize for display if needed
+            display_frame = self.resize_for_display(output_frame)
+            
+            # Display frame
+            cv2.imshow('Classroom Pose Detection - Video', display_frame)
+            
+            # Check for user input
+            key = cv2.waitKey(1) & 0xFF
+            if key == ord('q'):
+                break
+            elif key == ord('s'):
+                # Save current frame
+                timestamp = int(time.time())
+                save_path = f"frame_capture_{timestamp}.jpg"
+                cv2.imwrite(save_path, output_frame)
+                print(f"Frame saved as: {save_path}")
+        
+        # Cleanup
+        cap.release()
+        cv2.destroyAllWindows()
+
 def main():
     """Main function to run the classroom pose detection"""
+    import argparse
+    
+    parser = argparse.ArgumentParser(description='Classroom Pose Detection')
+    parser.add_argument('source', nargs='?', default='0', 
+                       help='Source: webcam (0), image file, or video file')
+    parser.add_argument('--output', '-o', type=str, 
+                       help='Output path for processed image/video')
+    parser.add_argument('--model', '-m', type=str, default='yolov8s-pose.pt',
+                       help='Path to YOLOv8 pose model')
+    parser.add_argument('--max-persons', type=int, default=30,
+                       help='Maximum number of persons to track')
+    parser.add_argument('--no-display', action='store_true',
+                       help='Don\'t display the result (useful for batch processing)')
+    
+    args = parser.parse_args()
+    
     # Initialize detector
-    detector = ClassroomPoseDetector()
+    detector = ClassroomPoseDetector(model_path=args.model, max_persons=args.max_persons)
     
-    # Open video capture (0 for webcam, or provide video file path)
-    cap = cv2.VideoCapture('Test.mp4')  # Change to video file path if needed
+    source = args.source
     
-    if not cap.isOpened():
-        print("Error: Could not open video source")
-        return
-    
-    print("Starting classroom pose detection...")
-    print("Press 'q' to quit")
-    
-    frame_count = 0
-    fps_start_time = time.time()
-    
-    while True:
-        ret, frame = cap.read()
-        if not ret:
-            print("End of video or failed to read frame")
-            break
-        
-        # Process frame
-        tracked_objects = detector.process_frame(frame)
-        
-        # Visualize results
-        output_frame = detector.visualize_results(frame, tracked_objects)
-        
-        # Calculate and display FPS
-        frame_count += 1
-        if frame_count % 30 == 0:
-            fps_end_time = time.time()
-            fps = 30 / (fps_end_time - fps_start_time)
-            fps_start_time = fps_end_time
-            print(f"FPS: {fps:.2f}, Persons: {len(tracked_objects)}")
-        
-        # Display frame
-        cv2.imshow('Classroom Pose Detection', output_frame)
-        
-        # Check for quit
-        if cv2.waitKey(1) & 0xFF == ord('q'):
-            break
-    
-    # Cleanup
-    cap.release()
-    cv2.destroyAllWindows()
-    print("Detection completed!")
+    # Handle different source types
+    if source.isdigit():
+        # Webcam
+        print("Using webcam...")
+        detector.process_video(int(source))
+    elif os.path.isfile(source):
+        # File exists
+        if detector.is_image_file(source):
+            # Image file
+            output_path = args.output
+            if output_path is None:
+                # Auto-generate output filename
+                base_name = Path(source).stem
+                extension = Path(source).suffix
+                output_path = f"{base_name}_result{extension}"
+            
+            tracked_objects, output_frame = detector.process_image(
+                source, output_path, show_result=not args.no_display
+            )
+            
+            if tracked_objects is not None:
+                print(f"Detection completed! Found {len(tracked_objects)} persons.")
+            
+        elif detector.is_video_file(source):
+            # Video file
+            detector.process_video(source)
+        else:
+            print(f"Error: Unsupported file format: {source}")
+            print("Supported image formats:", detector.image_formats)
+            print("Supported video formats:", detector.video_formats)
+    else:
+        print(f"Error: File not found: {source}")
+        print("Usage examples:")
+        print("  python script.py 0                    # Use webcam")
+        print("  python script.py image.jpg            # Process image")
+        print("  python script.py video.mp4            # Process video")
+        print("  python script.py image.jpg -o result.jpg  # Save result")
 
 if __name__ == "__main__":
     main()
