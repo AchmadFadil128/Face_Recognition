@@ -21,3 +21,5 @@ deepface/
 dlib/
 
 database/
+students.json
+node_modules/

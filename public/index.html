@@ -1,0 +1,138 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8"/>
+  <meta name="viewport" content="width=device-width,initial-scale=1"/>
+  <title>Attendance Demo - SIPINTAR</title>
+  <style>
+    body{font-family: Arial, sans-serif; margin:20px; background:#f7f9fc}
+    h1{margin-bottom:8px}
+    .container{max-width:900px;margin:0 auto;background:#fff;padding:20px;border-radius:8px;box-shadow:0 2px 8px rgba(0,0,0,0.06)}
+    table{width:100%;border-collapse:collapse;margin-top:12px}
+    th,td{padding:8px 10px;border-bottom:1px solid #eee;text-align:left}
+    th{background:#f5f7fb}
+    .btn{padding:6px 10px;border-radius:6px;border:0;cursor:pointer}
+    .btn-danger{background:#ff6b6b;color:#fff}
+    .btn-primary{background:#007bff;color:#fff}
+    .status-present{background:#d4f8dc;padding:6px 8px;border-radius:6px}
+    .status-absent{background:#ffdede;padding:6px 8px;border-radius:6px}
+    .form-row{display:flex;gap:8px;align-items:center;margin-top:8px}
+    input[type=text]{padding:8px;border:1px solid #ddd;border-radius:6px;flex:1}
+    .small{font-size:13px;color:#666}
+    .top-actions{display:flex;justify-content:space-between;align-items:center}
+  </style>
+</head>
+<body>
+  <div class="container">
+    <div class="top-actions">
+      <div>
+        <h1>SIPINTAR — Attendance Demo</h1>
+        <div class="small">Endpoint: <code>POST /api/attendance/mark</code> • Payload: <code>{"studentNumber":"SWxxx","status":"PRESENT"}</code></div>
+      </div>
+      <div>
+        <button id="refreshBtn" class="btn">Refresh</button>
+      </div>
+    </div>
+
+    <div style="margin-top:12px">
+      <strong>Add student</strong>
+      <div class="form-row">
+        <input id="inpNumber" type="text" placeholder="Student Number (e.g. SW001)"/>
+        <input id="inpName" type="text" placeholder="Name"/>
+        <input id="inpClass" type="text" placeholder="Class"/>
+        <button id="addBtn" class="btn btn-primary">Add</button>
+      </div>
+    </div>
+
+    <table id="tbl">
+      <thead>
+        <tr><th>ID</th><th>Nama</th><th>Kelas</th><th>Status</th><th>Aksi</th></tr>
+      </thead>
+      <tbody></tbody>
+    </table>
+
+    <div class="small" style="margin-top:12px">You can also send POST from Python or curl to update status. The page updates in real-time via SSE.</div>
+  </div>
+
+<script>
+const apiBase = '';
+
+async function fetchStudents() {
+  const res = await fetch(apiBase + '/api/students');
+  const data = await res.json();
+  return data;
+}
+
+function render(students) {
+  const tbody = document.querySelector('#tbl tbody');
+  tbody.innerHTML = '';
+  students.forEach(s => {
+    const tr = document.createElement('tr');
+    tr.innerHTML = `
+      <td>${s.studentNumber}</td>
+      <td>${s.name}</td>
+      <td>${s.class || ''}</td>
+      <td>${s.status === 'PRESENT' ? '<span class="status-present">PRESENT</span>' : '<span class="status-absent">ABSENT</span>'}</td>
+      <td>
+        <button class="btn" onclick="mark('${s.studentNumber}','PRESENT')">Mark Present</button>
+        <button class="btn" onclick="mark('${s.studentNumber}','ABSENT')">Mark Absent</button>
+        <button class="btn btn-danger" onclick="removeStudent('${s.studentNumber}')">Delete</button>
+      </td>
+    `;
+    tbody.appendChild(tr);
+  });
+}
+
+async function mark(studentNumber, status) {
+  await fetch(apiBase + '/api/attendance/mark', {
+    method: 'POST',
+    headers: {'Content-Type':'application/json'},
+    body: JSON.stringify({ studentNumber, status })
+  });
+  // no need to refresh; SSE will update UI
+}
+
+async function removeStudent(studentNumber) {
+  if (!confirm('Delete ' + studentNumber + '?')) return;
+  await fetch(apiBase + '/api/students/' + encodeURIComponent(studentNumber), { method: 'DELETE' });
+}
+
+document.getElementById('addBtn').addEventListener('click', async () => {
+  const number = document.getElementById('inpNumber').value.trim();
+  const name = document.getElementById('inpName').value.trim();
+  const klass = document.getElementById('inpClass').value.trim();
+  if (!number || !name) { alert('Number and name required'); return; }
+  await fetch(apiBase + '/api/students', {
+    method:'POST',
+    headers: {'Content-Type':'application/json'},
+    body: JSON.stringify({ studentNumber: number, name, class: klass })
+  });
+  document.getElementById('inpNumber').value = '';
+  document.getElementById('inpName').value = '';
+  document.getElementById('inpClass').value = '';
+});
+
+document.getElementById('refreshBtn').addEventListener('click', async () => {
+  const students = await fetchStudents();
+  render(students);
+});
+
+// SSE connection
+const es = new EventSource('/events');
+es.addEventListener('students', e => {
+  const students = JSON.parse(e.data);
+  render(students);
+});
+es.addEventListener('attendance', e => {
+  const info = JSON.parse(e.data);
+  // optional toast or visual feedback
+  console.log('attendance event', info);
+});
+
+(async ()=> {
+  const students = await fetchStudents();
+  render(students);
+})();
+</script>
+</body>
+</html>
