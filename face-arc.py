@@ -5,103 +5,12 @@ import pickle
 from sklearn.metrics.pairwise import cosine_similarity
 import threading
 from queue import Queue
-import datetime as dt
-import sqlite3
+import requests
 
-try:
-    import mysql.connector as mysql_connector
-    from mysql.connector import Error as MySQLError
-    MYSQL_AVAILABLE = True
-except Exception:
-    MYSQL_AVAILABLE = False
-    mysql_connector = None
-    MySQLError = Exception
-
-class MySQLLogger:
-    def __init__(self, host, port, user, password, database, table):
-        self.host = host
-        self.port = port
-        self.user = user
-        self.password = password
-        self.database = database
-        self.table = table
-        self.conn = None
-        self.cur = None
-        self._connect_and_prepare()
-
-    def _connect_and_prepare(self):
-        try:
-            self.conn = mysql_connector.connect(
-                host=self.host, port=self.port, user=self.user, password=self.password
-            )
-            self.cur = self.conn.cursor()
-            self.cur.execute(
-                f"CREATE DATABASE IF NOT EXISTS `{self.database}` CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci"
-            )
-            self.cur.execute(f"USE `{self.database}`")
-            self.cur.execute(
-                f"""
-                CREATE TABLE IF NOT EXISTS `{self.table}` (
-                    `id` INT NOT NULL AUTO_INCREMENT,
-                    `detected_at` DATETIME NOT NULL,
-                    `name` VARCHAR(255) NOT NULL,
-                    `confidence` FLOAT NOT NULL,
-                    `x` INT NOT NULL,
-                    `y` INT NOT NULL,
-                    `w` INT NOT NULL,
-                    `h` INT NOT NULL,
-                    PRIMARY KEY (`id`),
-                    INDEX `idx_detected_at` (`detected_at`),
-                    INDEX `idx_name` (`name`)
-                ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
-                """
-            )
-            self.conn.commit()
-        except MySQLError as e:
-            self.close()
-            raise e
-
-    def log(self, detections, detected_at):
-        if not detections or self.conn is None:
-            return
-        rows = []
-        for det in detections:
-            x, y, w, h = det.get('bbox', (0, 0, 0, 0))
-            name = det.get('name', 'Unknown') or 'Unknown'
-            confidence = float(det.get('confidence', 0) or 0)
-            rows.append((detected_at, name, confidence, int(x), int(y), int(w), int(h)))
-        try:
-            insert_sql = (
-                f"INSERT INTO `{self.table}` (detected_at, name, confidence, x, y, w, h) "
-                f"VALUES (%s, %s, %s, %s, %s, %s, %s)"
-            )
-            self.cur.executemany(insert_sql, rows)
-            self.conn.commit()
-        except MySQLError:
-            try:
-                self.conn.rollback()
-            except MySQLError:
-                pass
-
-    def close(self):
-        try:
-            if self.cur is not None:
-                self.cur.close()
-            if self.conn is not None and self.conn.is_connected():
-                self.conn.close()
-        except Exception:
-            pass
 
 class OptimizedFaceRecognitionSystem:
     def __init__(self, database_path="database", confidence_threshold=0.4, 
-                 embeddings_file="face_embeddings.pkl",
-                 mysql_enabled=True,
-                 mysql_host=None,
-                 mysql_port=None,
-                 mysql_user=None,
-                 mysql_password=None,
-                 mysql_db=None,
-                 mysql_table=None):
+                 embeddings_file="face_embeddings.pkl"):
         
         self.database_path = database_path
         self.confidence_threshold = confidence_threshold
@@ -135,36 +44,41 @@ class OptimizedFaceRecognitionSystem:
         self.processing_thread = None
         self.stop_processing = False
         
-        # MySQL configuration
-        self.mysql_enabled = bool(mysql_enabled) and MYSQL_AVAILABLE
-        self.mysql_host = mysql_host or os.getenv('MYSQL_HOST', 'localhost')
-        self.mysql_port = int(mysql_port or os.getenv('MYSQL_PORT', '3306'))
-        self.mysql_user = mysql_user or os.getenv('MYSQL_USER', 'facerecog')
-        self.mysql_password = mysql_password or os.getenv('MYSQL_PASSWORD', 'facerecog')
-        self.mysql_db = mysql_db or os.getenv('MYSQL_DB', 'face_recognition')
-        self.mysql_table = mysql_table or os.getenv('MYSQL_TABLE', 'face_detections')
-
-        # Setup MySQL logger
-        self.mysql_logger = None
-        if mysql_enabled and not MYSQL_AVAILABLE:
-            self.mysql_enabled = False
-        elif self.mysql_enabled:
-            try:
-                self.mysql_logger = MySQLLogger(self.mysql_host, self.mysql_port, self.mysql_user, self.mysql_password, self.mysql_db, self.mysql_table)
-            except MySQLError:
-                self.mysql_enabled = False
+        # Manual mapping from recognized names to student numbers
+        self.name_to_student_number = {
+            "Achmad": "SW001",
+            "Adel": "SW002",
+            "Aziz": "SW003",
+            "Ibrahim": "SW004",
+        }
+        
+        # Track sent attendances to avoid duplicates per run
+        self.sent_student_numbers = set()
         
         # Load or create embeddings
         self.load_or_create_embeddings()
 
-    def log_detections(self, detections):
-        if not self.mysql_enabled or not detections or self.mysql_logger is None:
+    def send_attendance(self, detections):
+        """Send attendance for newly recognized students via POST, avoiding duplicates per run."""
+        if not detections:
             return
-        try:
-            self.mysql_logger.log(detections, dt.datetime.now())
-        except MySQLError as e:
-            print(f"❌ Failed to log detections: {e}")
-        
+        endpoint = "http://localhost:3000/api/attendance/mark"
+        for det in detections:
+            name = det.get('name')
+            if not name or name == "Unknown":
+                continue
+            student_number = self.name_to_student_number.get(name)
+            if not student_number:
+                continue
+            if student_number in self.sent_student_numbers:
+                continue
+            payload = {
+                "studentNumber": student_number,
+                "status": "PRESENT",
+            }
+            requests.post(endpoint, json=payload)
+            self.sent_student_numbers.add(student_number)
+
     def load_or_create_embeddings(self):
         """Load precomputed embeddings or create them if they don't exist"""
         if os.path.exists(self.embeddings_file):
@@ -489,7 +403,7 @@ class OptimizedFaceRecognitionSystem:
                 
                 if not self.result_queue.empty():
                     self.last_results = self.result_queue.get()
-                    self.log_detections(self.last_results)
+                    self.send_attendance(self.last_results)
                 
                 if self.last_results:
                     frame = self.draw_results(frame, self.last_results)
@@ -521,11 +435,6 @@ class OptimizedFaceRecognitionSystem:
                 self.processing_thread.join(timeout=1)
             cap.release()
             cv2.destroyAllWindows()
-            try:
-                if self.mysql_logger is not None:
-                    self.mysql_logger.close()
-            except Exception:
-                pass
 
 def main():
     if not os.path.exists("database"):

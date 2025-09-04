@@ -19,3 +19,5 @@ Thumbs.db
 # Deepface library folder (jika hasil ekstrak atau clone)
 deepface/
 dlib/
+
+database/

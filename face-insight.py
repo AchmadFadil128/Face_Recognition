@@ -178,7 +178,7 @@ def main(args):
     print(f"[i] loaded {len(names)} enrolled identities")
 
     # open camera
-    cap = cv2.VideoCapture(args.camera)
+    cap = cv2.VideoCapture(0)
     # attempt to set to 1920x1080
     cap.set(cv2.CAP_PROP_FRAME_WIDTH, 1920)
     cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 1080)
