@@ -16,6 +16,8 @@ Install dependensi berikut:
 
 ```bash
 pip install deepface opencv-python numpy scikit-learn
+pip install insightface opencv-contrib-python numpy requests onnxruntime
+
 ````
 
 Jika ingin CPU-only PyTorch:

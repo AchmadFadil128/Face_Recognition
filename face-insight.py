@@ -13,9 +13,41 @@ import os
 import cv2
 import pickle
 import argparse
+import requests
 import time
 import numpy as np
 from insightface.app import FaceAnalysis
+
+# ---------------------------
+# Attendance POST config
+# ---------------------------
+ATTENDANCE_ENDPOINT = "http://localhost:3000/api/attendance/mark"
+
+# Manual name → studentNumber mapping
+NAME_TO_STUDENT = {
+    "Achmad": "SW001",
+    "Adel": "SW002",
+    "Aziz": "SW003",
+    "Ibrahim": "SW004",
+}
+
+# Per-run dedupe to avoid multiple posts for same student
+_SENT_STUDENT_NUMBERS = set()
+
+def send_attendance(label):
+    """Send attendance for recognized label once per run."""
+    student_number = NAME_TO_STUDENT.get(label)
+    if not student_number:
+        return
+    if student_number in _SENT_STUDENT_NUMBERS:
+        return
+    payload = {"studentNumber": student_number, "status": "PRESENT"}
+    try:
+        requests.post(ATTENDANCE_ENDPOINT, json=payload)
+        _SENT_STUDENT_NUMBERS.add(student_number)
+    except Exception:
+        # per requirement: no error handling; ignore failures for now
+        pass
 
 # ---------------------------
 # Utility: Pickle storage for embeddings
@@ -235,6 +267,9 @@ def main(args):
                     label = "Unknown"
 
                 results.append((box, label, best_score))
+                # send attendance for recognized label (not Unknown)
+                if label != "Unknown":
+                    send_attendance(label)
 
             last_results = results
             t2 = time.time()
